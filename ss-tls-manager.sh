@@ -11,6 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # 日志函数
@@ -30,23 +31,270 @@ log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
+# 检查安装状态
+check_installation_status() {
+    SS_INSTALLED=false
+    STLS_INSTALLED=false
+    SS_RUNNING=false
+    STLS_RUNNING=false
+    
+    # 检查 Shadowsocks 安装状态
+    if [[ -f /usr/local/bin/ssserver ]] && [[ -f /etc/systemd/system/shadowsocks.service ]]; then
+        SS_INSTALLED=true
+        if systemctl is-active --quiet shadowsocks 2>/dev/null; then
+            SS_RUNNING=true
+        fi
+    fi
+    
+    # 检查 Shadow TLS 安装状态
+    if [[ -f /usr/local/bin/shadow-tls ]] && [[ -f /etc/systemd/system/shadow-tls.service ]]; then
+        STLS_INSTALLED=true
+        if systemctl is-active --quiet shadow-tls 2>/dev/null; then
+            STLS_RUNNING=true
+        fi
+    fi
+}
+
+# 获取端口信息
+get_port_info() {
+    SS_PORT=""
+    TLS_PORT=""
+    
+    if [[ -f /etc/shadowsocks/config.json ]]; then
+        SS_PORT=$(grep -o '"server_port":[[:space:]]*[0-9]*' /etc/shadowsocks/config.json | grep -o '[0-9]*')
+    fi
+    
+    if [[ -f /etc/systemd/system/shadow-tls.service ]]; then
+        TLS_PORT=$(grep -o '\[::\]:[0-9]*' /etc/systemd/system/shadow-tls.service | grep -o '[0-9]*')
+    fi
+}
+
+# 显示系统状态
+show_system_status() {
+    check_installation_status
+    get_port_info
+    
+    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN}           系统状态检查${NC}"
+    echo -e "${CYAN}========================================${NC}"
+    
+    # Shadowsocks 状态
+    echo -e "\n${YELLOW}📦 Shadowsocks 状态:${NC}"
+    if $SS_INSTALLED; then
+        echo -e "   安装状态: ${GREEN}✅ 已安装${NC}"
+        if $SS_RUNNING; then
+            echo -e "   运行状态: ${GREEN}✅ 正在运行${NC}"
+            [[ -n "$SS_PORT" ]] && echo -e "   监听端口: ${BLUE}$SS_PORT${NC}"
+        else
+            echo -e "   运行状态: ${RED}❌ 未运行${NC}"
+        fi
+    else
+        echo -e "   安装状态: ${RED}❌ 未安装${NC}"
+        echo -e "   运行状态: ${RED}❌ 未运行${NC}"
+    fi
+    
+    # Shadow TLS 状态
+    echo -e "\n${YELLOW}🔒 Shadow TLS 状态:${NC}"
+    if $STLS_INSTALLED; then
+        echo -e "   安装状态: ${GREEN}✅ 已安装${NC}"
+        if $STLS_RUNNING; then
+            echo -e "   运行状态: ${GREEN}✅ 正在运行${NC}"
+            [[ -n "$TLS_PORT" ]] && echo -e "   监听端口: ${BLUE}$TLS_PORT${NC}"
+        else
+            echo -e "   运行状态: ${RED}❌ 未运行${NC}"
+        fi
+    else
+        echo -e "   安装状态: ${RED}❌ 未安装${NC}"
+        echo -e "   运行状态: ${RED}❌ 未运行${NC}"
+    fi
+    
+    # 配置文件状态
+    echo -e "\n${YELLOW}📄 配置文件状态:${NC}"
+    if [[ -f /root/ss-tls-config.txt ]]; then
+        echo -e "   配置文件: ${GREEN}✅ 存在${NC} (/root/ss-tls-config.txt)"
+    else
+        echo -e "   配置文件: ${RED}❌ 不存在${NC}"
+    fi
+    
+    # 端口监听状态
+    echo -e "\n${YELLOW}🌐 端口监听状态:${NC}"
+    local listening_ports=$(ss -tulpn 2>/dev/null | grep -E "(ssserver|shadow-tls)" | wc -l)
+    if [[ $listening_ports -gt 0 ]]; then
+        echo -e "   监听状态: ${GREEN}✅ 正常${NC}"
+        ss -tulpn 2>/dev/null | grep -E "(ssserver|shadow-tls)" | while read line; do
+            echo -e "   ${BLUE}$line${NC}"
+        done
+    else
+        echo -e "   监听状态: ${RED}❌ 无相关端口监听${NC}"
+    fi
+    
+    # 整体状态总结
+    echo -e "\n${YELLOW}📊 整体状态:${NC}"
+    if $SS_INSTALLED && $STLS_INSTALLED && $SS_RUNNING && $STLS_RUNNING; then
+        echo -e "   ${GREEN}✅ 服务完全正常，可以使用${NC}"
+    elif $SS_INSTALLED && $STLS_INSTALLED; then
+        echo -e "   ${YELLOW}⚠️  服务已安装但未完全运行${NC}"
+    elif $SS_INSTALLED || $STLS_INSTALLED; then
+        echo -e "   ${YELLOW}⚠️  部分服务已安装${NC}"
+    else
+        echo -e "   ${RED}❌ 服务未安装${NC}"
+    fi
+    
+    echo -e "${CYAN}========================================${NC}"
+}
+
 # 显示菜单
 show_menu() {
     clear
+    
+    # 显示系统状态
+    show_system_status
+    
+    echo
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BLUE}  Shadowsocks 2022 + Shadow TLS V3${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo
     echo -e "${YELLOW}请选择操作：${NC}"
-    echo "1) 安装 Shadowsocks + Shadow TLS"
-    echo "2) 卸载 Shadowsocks + Shadow TLS"
-    echo "3) 查看配置信息"
-    echo "4) 重启服务"
-    echo "5) 查看服务状态"
-    echo "6) 查看日志"
-    echo "0) 退出"
+    
+    # 根据安装状态调整菜单显示
+    check_installation_status
+    
+    if ! $SS_INSTALLED && ! $STLS_INSTALLED; then
+        echo -e "${GREEN}1) 🚀 安装 Shadowsocks + Shadow TLS${NC}"
+    elif $SS_INSTALLED && $STLS_INSTALLED; then
+        if $SS_RUNNING && $STLS_RUNNING; then
+            echo -e "1) ✅ 重新安装 Shadowsocks + Shadow TLS"
+        else
+            echo -e "${YELLOW}1) 🔧 重新安装 Shadowsocks + Shadow TLS${NC}"
+        fi
+        echo -e "${RED}2) 🗑️  卸载 Shadowsocks + Shadow TLS${NC}"
+        echo -e "3) 📋 查看配置信息"
+        echo -e "4) 🔄 重启服务"
+        echo -e "6) 📝 查看日志"
+    else
+        echo -e "${YELLOW}1) 🔧 完成安装 Shadowsocks + Shadow TLS${NC}"
+        echo -e "${RED}2) 🗑️  卸载已安装组件${NC}"
+    fi
+    
+    echo -e "5) 📊 查看详细状态"
+    echo -e "7) 🔧 故障排除"
+    echo -e "0) 🚪 退出"
     echo
-    read -p "请输入选项 [0-6]: " choice
+    read -p "请输入选项 [0-7]: " choice
+}
+
+# 故障排除功能
+troubleshoot() {
+    echo -e "${YELLOW}========================================${NC}"
+    echo -e "${YELLOW}           故障排除${NC}"
+    echo -e "${YELLOW}========================================${NC}"
+    
+    check_installation_status
+    
+    echo -e "\n${BLUE}🔍 正在检查常见问题...${NC}\n"
+    
+    # 检查服务状态
+    if $SS_INSTALLED && ! $SS_RUNNING; then
+        echo -e "${RED}❌ Shadowsocks 服务未运行${NC}"
+        echo -e "   尝试启动: ${CYAN}systemctl start shadowsocks${NC}"
+        echo -e "   查看日志: ${CYAN}journalctl -u shadowsocks${NC}"
+        echo
+    fi
+    
+    if $STLS_INSTALLED && ! $STLS_RUNNING; then
+        echo -e "${RED}❌ Shadow TLS 服务未运行${NC}"
+        echo -e "   尝试启动: ${CYAN}systemctl start shadow-tls${NC}"
+        echo -e "   查看日志: ${CYAN}journalctl -u shadow-tls${NC}"
+        echo
+    fi
+    
+    # 检查端口占用
+    if [[ -n "$TLS_PORT" ]]; then
+        local port_check=$(ss -tulpn | grep ":$TLS_PORT " | wc -l)
+        if [[ $port_check -eq 0 ]] && $STLS_INSTALLED; then
+            echo -e "${RED}❌ Shadow TLS 端口 $TLS_PORT 未监听${NC}"
+        fi
+    fi
+    
+    if [[ -n "$SS_PORT" ]]; then
+        local port_check=$(ss -tulpn | grep ":$SS_PORT " | wc -l)
+        if [[ $port_check -eq 0 ]] && $SS_INSTALLED; then
+            echo -e "${RED}❌ Shadowsocks 端口 $SS_PORT 未监听${NC}"
+        fi
+    fi
+    
+    # 检查防火墙
+    echo -e "${BLUE}🔥 防火墙检查:${NC}"
+    if command -v ufw >/dev/null 2>&1; then
+        echo -e "   UFW 状态: $(ufw status | head -1)"
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        echo -e "   Firewalld 状态: $(systemctl is-active firewalld)"
+    else
+        echo -e "   使用 iptables"
+    fi
+    
+    # 提供修复选项
+    echo -e "\n${YELLOW}🛠️  快速修复选项:${NC}"
+    echo "1) 重启所有服务"
+    echo "2) 重新加载配置"
+    echo "3) 检查并修复防火墙"
+    echo "4) 查看详细错误日志"
+    echo "0) 返回主菜单"
+    
+    read -p "选择修复选项 [0-4]: " fix_choice
+    
+    case $fix_choice in
+        1)
+            log_info "重启服务..."
+            systemctl restart shadowsocks shadow-tls 2>/dev/null || true
+            sleep 2
+            show_system_status
+            ;;
+        2)
+            log_info "重新加载配置..."
+            systemctl daemon-reload
+            systemctl restart shadowsocks shadow-tls 2>/dev/null || true
+            ;;
+        3)
+            log_info "检查防火墙..."
+            get_port_info
+            if [[ -n "$TLS_PORT" ]] && [[ -n "$SS_PORT" ]]; then
+                configure_firewall_fix
+            else
+                log_error "无法获取端口信息"
+            fi
+            ;;
+        4)
+            echo -e "\n${YELLOW}Shadowsocks 错误日志:${NC}"
+            journalctl -u shadowsocks --no-pager -l | tail -10
+            echo -e "\n${YELLOW}Shadow TLS 错误日志:${NC}"
+            journalctl -u shadow-tls --no-pager -l | tail -10
+            ;;
+        0)
+            return
+            ;;
+    esac
+}
+
+# 修复防火墙配置
+configure_firewall_fix() {
+    log_info "修复防火墙配置..."
+    
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow $TLS_PORT/tcp 2>/dev/null || true
+        ufw allow $SS_PORT/udp 2>/dev/null || true
+        log_success "UFW 规则已更新"
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port=$TLS_PORT/tcp 2>/dev/null || true
+        firewall-cmd --permanent --add-port=$SS_PORT/udp 2>/dev/null || true
+        firewall-cmd --reload 2>/dev/null || true
+        log_success "Firewalld 规则已更新"
+    else
+        iptables -I INPUT -p tcp --dport $TLS_PORT -j ACCEPT 2>/dev/null || true
+        iptables -I INPUT -p udp --dport $SS_PORT -j ACCEPT 2>/dev/null || true
+        log_success "iptables 规则已更新"
+    fi
 }
 
 # 检查系统
@@ -628,6 +876,10 @@ main_menu() {
                 ;;
             6)
                 show_logs
+                read -p "按回车键继续..."
+                ;;
+            7)
+                troubleshoot
                 read -p "按回车键继续..."
                 ;;
             0)
